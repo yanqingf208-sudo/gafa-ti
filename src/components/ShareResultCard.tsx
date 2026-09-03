@@ -66,6 +66,7 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
   const exportCardRef = useRef<HTMLDivElement>(null);
   const [characterDataUrl, setCharacterDataUrl] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [showExportOverlay, setShowExportOverlay] = useState(false);
   const [hasCopied, setHasCopied] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -76,11 +77,10 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
   // 等待容器内所有图片加载完成、解码并确保 naturalWidth > 0
   const waitForImages = async (container: HTMLElement) => {
     const images = Array.from(container.querySelectorAll('img'));
-    console.log(`[GAFA-TI Mobile Poster] image count: ${images.length}`);
+    console.log(`[GAFA-TI Poster] image count: ${images.length}`);
 
     await Promise.all(
       images.map(async (img) => {
-        // 若图片尚未加载完成或尺寸为 0，等待 onload / onerror
         if (!img.complete || img.naturalWidth === 0) {
           await new Promise<void>((resolve) => {
             const onFinish = () => {
@@ -93,22 +93,21 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
           });
         }
 
-        // 尝试调用 decode() 确保解码至显存渲染就绪
         if (typeof img.decode === 'function') {
           try {
             await img.decode();
           } catch (decodeErr) {
-            console.warn('[GAFA-TI Mobile Poster] Image decode warning (non-fatal):', decodeErr);
+            console.warn('[GAFA-TI Poster] Image decode warning (non-fatal):', decodeErr);
           }
         }
 
         console.log(
-          `[GAFA-TI Mobile Poster] img complete: ${img.complete}, naturalWidth: ${img.naturalWidth}, naturalHeight: ${img.naturalHeight}, isDataUrl: ${img.src.startsWith('data:image/')}`
+          `[GAFA-TI Poster] character img complete: ${img.complete}, naturalWidth: ${img.naturalWidth}, naturalHeight: ${img.naturalHeight}`
         );
 
         if (!img.complete || img.naturalWidth === 0) {
           console.error(
-            `[GAFA-TI Mobile Poster] Image failed to render: src=${img.src.slice(0, 60)}..., complete=${img.complete}, naturalWidth=${img.naturalWidth}`
+            `[GAFA-TI Poster] Image failed to render: src=${img.src.slice(0, 60)}..., complete=${img.complete}, naturalWidth=${img.naturalWidth}`
           );
         }
       })
@@ -120,60 +119,62 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
 
     setErrorMessage(null);
     const isMobileOrTablet = checkIsMobileOrTablet();
-    const isIOSWebKit = checkIsIOSWebKit();
-
-    console.log(`[GAFA-TI Mobile Poster] device: mobileOrTablet=${isMobileOrTablet}, iOSWebKit=${isIOSWebKit}`);
+    console.log(`[GAFA-TI Poster] viewport width: ${window.innerWidth}, isMobileOrTablet: ${isMobileOrTablet}`);
 
     try {
       setIsExporting(true);
 
-      // 1. 等待字体加载就绪
-      await document.fonts.ready;
-      console.log('[GAFA-TI Mobile Poster] fonts ready');
-
-      // 2. 获取当前人物立绘图片并转换为 Base64 Data URL
+      // 1. 获取当前人物立绘图片并转换为 Base64 Data URL
       if (!charImageRecord?.src) {
         throw new Error(`Character image record missing for ${type.id}`);
       }
-      console.log(`[GAFA-TI Mobile Poster] original character URL: ${charImageRecord.src}`);
+      console.log(`[GAFA-TI Poster] original character URL: ${charImageRecord.src}`);
 
       let dataUrlString = characterDataUrl;
       if (!dataUrlString) {
         dataUrlString = await imageUrlToDataUrl(charImageRecord.src);
         setCharacterDataUrl(dataUrlString);
       }
-      console.log(`[GAFA-TI Mobile Poster] data URL ready: true, data URL length: ${dataUrlString.length}`);
+      console.log(`[GAFA-TI Poster] character data URL ready: true, length: ${dataUrlString.length}`);
 
-      // 3. 等待 React state 将 Data URL 应用到 exportCard DOM 并完成双帧渲染
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      // 2. 开启真实在当前视口内部渲染的导出层
+      setShowExportOverlay(true);
 
-      const targetExportDom = exportCardRef.current || previewCardRef.current;
+      // 3. 等待 React 挂载并渲染 exportCard
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      await document.fonts.ready;
+      console.log('[GAFA-TI Poster] fonts ready: true');
+
+      const targetExportDom = exportCardRef.current;
       if (!targetExportDom) {
-        throw new Error('Export card DOM ref is null');
+        throw new Error('Export card DOM ref is null after mounting in viewport');
       }
 
-      // 4. 等待导出专用卡片内所有图片 decode 就绪
+      // 4. 等待导出专用卡片内所有图片完成加载与 decode
       await waitForImages(targetExportDom);
 
-      // 验证人物图片是否已为 Data URL 且尺寸有效
-      const exportImg = targetExportDom.querySelector('img');
-      if (exportImg) {
-        if (!exportImg.complete || exportImg.naturalWidth === 0) {
-          throw new Error('Export character image not fully decoded or naturalWidth is 0');
-        }
-        if (!exportImg.src.startsWith('data:image/')) {
-          console.warn('[GAFA-TI Mobile Poster] Warning: Export img src is not data URL, forcing inline reload');
-        }
+      // 5. 校验 DOM 渲染尺寸与位置（确保在视口内真实渲染，width > 0, height > 0）
+      const rect = targetExportDom.getBoundingClientRect();
+      console.log(`[GAFA-TI Poster] card width: ${rect.width}, card height: ${rect.height}, card x: ${rect.left}, card y: ${rect.top}`);
+
+      if (rect.width === 0 || rect.height === 0) {
+        throw new Error(`Export card DOM has invalid bounding dimensions: ${rect.width}x${rect.height}`);
       }
 
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      console.log('[GAFA-TI Mobile Poster] DOM ready');
+      const exportImg = targetExportDom.querySelector('img');
+      if (!exportImg || !exportImg.complete || exportImg.naturalWidth === 0) {
+        throw new Error('Export character image not rendered or naturalWidth is 0');
+      }
+      console.log(`[GAFA-TI Poster] character naturalWidth: ${exportImg.naturalWidth}`);
 
-      const pixelRatio = isMobileOrTablet ? 1 : 2;
-      console.log(`[GAFA-TI Mobile Poster] pixelRatio: ${pixelRatio}`);
+      // 等待至少 2 帧稳定
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      console.log('[GAFA-TI Poster] DOM rendered: true');
+
+      // 540x720 节点配合 pixelRatio: 2 可稳定输出 1080x1440 高清海报
+      const pixelRatio = 2;
+      console.log(`[GAFA-TI Poster] toPng start, pixelRatio: ${pixelRatio}`);
 
       const exportOptions = {
         cacheBust: true,
@@ -181,58 +182,45 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
         pixelRatio,
       };
 
-      // 5. iOS / iPadOS WebKit 预热生成（第一次调用唤醒图形管线，结果丢弃）
-      if (isIOSWebKit) {
-        try {
-          await toPng(targetExportDom, exportOptions);
-          await new Promise((resolve) => requestAnimationFrame(resolve));
-          await new Promise((resolve) => requestAnimationFrame(resolve));
-          console.log('[GAFA-TI Mobile Poster] warmup complete');
-        } catch (warmupErr) {
-          console.warn('[GAFA-TI Mobile Poster] Warmup pass ignored error:', warmupErr);
-        }
-      }
-
-      // 6. 正式生成 PNG Data URL
       const finalDataUrl = await toPng(targetExportDom, exportOptions);
 
       if (!finalDataUrl || !finalDataUrl.startsWith('data:image/png')) {
         throw new Error('Invalid dataUrl produced by toPng');
       }
-      console.log('[GAFA-TI Mobile Poster] final PNG generated');
+      console.log('[GAFA-TI Poster] toPng success: true');
 
-      // 7. 转换为标准 PNG Blob
+      // 6. 转换为标准 PNG Blob 并验证大小（必须 > 10000 字节，防止空白海报）
       const response = await fetch(finalDataUrl);
       const blob = await response.blob();
 
-      if (!blob || blob.type !== 'image/png' || blob.size === 0) {
-        throw new Error(`Invalid blob produced: type=${blob?.type}, size=${blob?.size}`);
+      if (!blob || blob.type !== 'image/png' || blob.size < 10000) {
+        throw new Error(`Generated PNG blob is abnormally small or invalid (blank poster prevention): size=${blob?.size}`);
       }
-      console.log(`[GAFA-TI Mobile Poster] blob size: ${blob.size}`);
+      console.log(`[GAFA-TI Poster] blob size: ${blob.size}`);
 
       const fileName = `GAFA-TI-${type.number}-${type.title}.png`;
 
-      // 8. 移动端优先尝试 Web Share API（可直接调用系统面板保存到照片或分享）
+      // 7. 移动端优先尝试 Web Share API（可直接调用系统面板保存到照片或分享）
       let sharedSuccessfully = false;
       if (isMobileOrTablet && typeof navigator !== 'undefined' && navigator.canShare) {
         try {
           const file = new File([blob], fileName, { type: 'image/png' });
           if (navigator.canShare({ files: [file] })) {
-            console.log('[GAFA-TI Mobile Poster] Attempting Web Share API with image file...');
+            console.log('[GAFA-TI Poster] Attempting Web Share API with image file...');
             await navigator.share({
               files: [file],
               title: `GAFA-TI 创作状态档案 · ${type.title}`,
               text: `我的广美创作状态是：${type.number} ${type.title} (${type.mbtiCode})`,
             });
             sharedSuccessfully = true;
-            console.log('[GAFA-TI Mobile Poster] download/share complete: Web Share succeeded');
+            console.log('[GAFA-TI Poster] download/share complete: Web Share succeeded');
           }
         } catch (shareErr) {
-          console.log('[GAFA-TI Mobile Poster] Web share canceled or fallback:', shareErr);
+          console.log('[GAFA-TI Poster] Web share canceled or fallback:', shareErr);
         }
       }
 
-      // 9. 桌面端或 Web Share 降级：标准 <a> 标签下载触发
+      // 8. 桌面端或 Web Share 降级：标准 <a> 标签下载触发
       if (!sharedSuccessfully) {
         const blobUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -248,12 +236,13 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
           URL.revokeObjectURL(blobUrl);
         }, 1500);
 
-        console.log('[GAFA-TI Mobile Poster] download/share complete: File download triggered');
+        console.log('[GAFA-TI Poster] download/share complete: File download triggered');
       }
     } catch (err) {
-      console.error('[GAFA-TI Mobile Poster] Failed to generate GAFA-TI poster:', err);
+      console.error('[GAFA-TI Poster] Failed to generate GAFA-TI poster:', err);
       setErrorMessage('海报生成失败，请重试');
     } finally {
+      setShowExportOverlay(false);
       setIsExporting(false);
     }
   };
@@ -437,29 +426,35 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
           {renderPosterInner()}
         </div>
 
-        {/* 导出专用离屏渲染节点 (固定逻辑尺寸、绝不 display:none、使用 Base64 Data URL 内联立绘) */}
-        <div
-          ref={exportCardRef}
-          id="share-poster-card-export"
-          aria-hidden="true"
-          style={{
-            position: 'fixed',
-            left: '-10000px',
-            top: 0,
-            width: '540px',
-            height: '720px',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            backgroundColor: '#FFFFFF',
-            visibility: 'visible',
-            pointerEvents: 'none',
-            zIndex: -9999,
-          }}
-          className="p-8 text-[#121212] relative overflow-hidden select-none"
-        >
-          {renderPosterInner(characterDataUrl || charImageRecord?.src)}
-        </div>
+        {/* 导出专用生成层（点击生成后真实渲染在当前视口内，严禁 left: -10000px 离屏，尺寸严格 540x720 配合 pixelRatio: 2） */}
+        {showExportOverlay && (
+          <div
+            id="share-poster-export-overlay"
+            className="fixed inset-0 z-[9999] bg-black/80 flex flex-col items-center justify-center p-4"
+          >
+            <div className="text-white text-sm font-bold mb-3 flex items-center gap-2">
+              <Download className="w-4 h-4 animate-bounce text-[#D4FF00]" />
+              <span>正在生成高清海报...</span>
+            </div>
+
+            {/* 真实处于视口内的 540x720 导出 DOM */}
+            <div
+              ref={exportCardRef}
+              id="share-poster-card-export"
+              style={{
+                width: '540px',
+                height: '720px',
+                backgroundColor: '#FFFFFF',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+              className="p-8 text-[#121212] rounded-none shadow-2xl relative overflow-hidden select-none"
+            >
+              {renderPosterInner(characterDataUrl || charImageRecord?.src)}
+            </div>
+          </div>
+        )}
 
         {/* Error message alert */}
         {errorMessage && (
