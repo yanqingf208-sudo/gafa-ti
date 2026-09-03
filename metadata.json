@@ -1,0 +1,6 @@
+{
+  "name": "GAFA-TI 广美创作状态测试",
+  "description": "广州美术学院迎新活动原创互动测试网站 — GAFA Creative Type Indicator (GAFA-TI)，探索16种广美创作状态与学生创作档案。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
