@@ -113,11 +113,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             </div>
           </div>
 
-          {/* Right Wing Character: GT-13 Hands-on Tester (Partially Cropped Right) */}
+          {/* Right Wing Character: GT-09 Focused Observer (Partially Cropped Right) */}
           <div className="absolute -right-10 sm:right-4 md:right-8 -bottom-10 sm:-bottom-8 transform scale-75 sm:scale-90 md:scale-100 rotate-3 transition-transform duration-500 hover:rotate-0">
             <div className="p-3 bg-white/90 rounded-2xl shadow-sm border border-zinc-200/70">
-              <span className="text-[10px] font-mono text-zinc-500 block mb-1">GT-13 动手验证型</span>
-              <CharacterAvatar id="gt-13" size="md" />
+              <span className="text-[10px] font-mono text-zinc-500 block mb-1">GT-09 专注描绘型</span>
+              <CharacterAvatar id="gt-09" size="md" />
             </div>
           </div>
         </div>

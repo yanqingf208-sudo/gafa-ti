@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { X, Download, Copy, Check, Sparkles, Share2 } from 'lucide-react';
-import html2canvas from 'html2canvas';
+import { X, Download, Copy, Check, Share2, AlertCircle } from 'lucide-react';
+import { toPng } from 'html-to-image';
 import { CreativeType } from '../types';
 import { CharacterAvatar } from '../assets/characters/CharacterAvatar';
 
@@ -18,27 +18,120 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
   const cardRef = useRef<HTMLDivElement>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [hasCopied, setHasCopied] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
+  // 等待容器内所有图片加载完成与解码
+  const waitForImages = async (container: HTMLElement) => {
+    const images = Array.from(container.querySelectorAll('img'));
+    await Promise.all(
+      images.map((img) => {
+        if (img.complete && img.naturalWidth > 0) {
+          return Promise.resolve();
+        }
+        if (img.decode) {
+          return img.decode().catch(() => {});
+        }
+        return new Promise<void>((resolve) => {
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+        });
+      })
+    );
+  };
+
   const handleDownload = async () => {
-    if (!cardRef.current || isExporting) return;
+    if (isExporting) return;
+
+    setErrorMessage(null);
+    console.log('[GAFA-TI Poster] Starting poster generation...');
+
+    if (!cardRef.current) {
+      console.error('[GAFA-TI Poster] 1. Ref found: FALSE (ShareResultCard ref is null)');
+      setErrorMessage('海报生成失败，请重试');
+      return;
+    }
+    console.log('[GAFA-TI Poster] 1. Ref found: TRUE');
+
     try {
       setIsExporting(true);
-      const canvas = await html2canvas(cardRef.current, {
-        scale: 3, // High-DPI export
-        useCORS: true,
-        backgroundColor: '#F8F8F9',
-        logging: false,
+
+      // 等待字体就绪
+      await document.fonts.ready;
+      console.log('[GAFA-TI Poster] 2. Fonts ready: TRUE');
+
+      // 等待所有人物图片解码就绪
+      await waitForImages(cardRef.current);
+      console.log('[GAFA-TI Poster] 3. Images ready: TRUE');
+
+      // 使用 html-to-image 纯白底高清渲染
+      const dataUrl = await toPng(cardRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#FFFFFF',
+        quality: 1,
       });
 
-      const dataUrl = canvas.toDataURL('image/png');
-      const link = document.createElement('a');
-      link.download = `GAFA-TI-${type.number}-${type.mbtiCode}.png`;
-      link.href = dataUrl;
-      link.click();
+      if (!dataUrl || !dataUrl.startsWith('data:image/png')) {
+        throw new Error('Invalid dataUrl produced by toPng');
+      }
+      console.log('[GAFA-TI Poster] 4. toPng completed: TRUE (dataUrl length:', dataUrl.length, ')');
+
+      // 转换为 PNG Blob
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+
+      if (!blob || blob.size === 0) {
+        throw new Error('Generated PNG blob is empty');
+      }
+      console.log('[GAFA-TI Poster] 5. Blob size:', blob.size, 'bytes, type:', blob.type);
+
+      const fileName = `GAFA-TI-${type.number}-${type.title}.png`;
+
+      // 移动端环境增强：若支持 Web Share API 分享文件，可直接调起系统分享
+      let sharedSuccessfully = false;
+      if (typeof navigator !== 'undefined' && navigator.canShare) {
+        try {
+          const file = new File([blob], fileName, { type: 'image/png' });
+          if (navigator.canShare({ files: [file] })) {
+            console.log('[GAFA-TI Poster] Attempting Web Share API with image file...');
+            await navigator.share({
+              files: [file],
+              title: `GAFA-TI 创作状态档案 · ${type.title}`,
+              text: `我的广美创作状态是：${type.number} ${type.title} (${type.mbtiCode})`,
+            });
+            sharedSuccessfully = true;
+            console.log('[GAFA-TI Poster] Web Share completed successfully');
+          }
+        } catch (shareErr) {
+          // 用户取消分享或环境限制，继续降级到标准下载
+          console.log('[GAFA-TI Poster] Web share canceled or fallback to download:', shareErr);
+        }
+      }
+
+      // 标准浏览器直接触发下载
+      if (!sharedSuccessfully) {
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName;
+        link.style.display = 'none';
+
+        document.body.appendChild(link);
+        link.click();
+
+        // 兼容移动端 Safari：若无法直接触发下载链接，打开图片供长按保存
+        setTimeout(() => {
+          document.body.removeChild(link);
+          URL.revokeObjectURL(blobUrl);
+        }, 1000);
+
+        console.log('[GAFA-TI Poster] 6. Download triggered:', fileName);
+      }
     } catch (err) {
-      console.error('Failed to export image:', err);
+      console.error('[GAFA-TI Poster] Failed to generate GAFA-TI poster:', err);
+      setErrorMessage('海报生成失败，请重试');
     } finally {
       setIsExporting(false);
     }
@@ -67,17 +160,18 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
           </button>
         </div>
 
-        {/* 3:4 Standalone Poster Card (Strict Reference to Section 15) */}
+        {/* 3:4 Standalone Poster Card (Pure White #FFFFFF Background, No CSS Shadows on Character) */}
         <div
           ref={cardRef}
           id="share-poster-card"
-          className="w-full aspect-[3/4] bg-[#FAF9F6] text-[#121212] rounded-[24px] p-6 sm:p-8 flex flex-col justify-between shadow-2xl border border-zinc-300 relative overflow-hidden select-none"
+          className="w-full aspect-[3/4] bg-[#FFFFFF] text-[#121212] rounded-[24px] p-6 sm:p-8 flex flex-col justify-between shadow-2xl border border-zinc-200 relative overflow-hidden select-none"
+          style={{ backgroundColor: '#FFFFFF' }}
         >
           {/* Top Poster Header */}
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-zinc-200">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-full bg-[#121212] text-white flex items-center justify-center font-bold text-xs">
+                <div className="w-6 h-6 rounded-full bg-[#D4FF00] text-black flex items-center justify-center font-bold text-xs">
                   G
                 </div>
                 <span className="font-extrabold text-sm tracking-tight">GAFA-TI</span>
@@ -100,15 +194,15 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
                   {type.enTitle}
                 </p>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-200/80 text-zinc-700">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-700">
                 {type.category}
               </span>
             </div>
           </div>
 
-          {/* Center: Large Character Illustration */}
+          {/* Center: Large Character Illustration (No CSS shadows, Pure White Canvas) */}
           <div className="my-auto py-2 flex flex-col items-center justify-center relative">
-            <div className="w-full h-44 sm:h-52 flex items-center justify-center">
+            <div className="w-full h-48 sm:h-56 flex items-center justify-center">
               <CharacterAvatar id={type.id} size="poster" />
             </div>
 
@@ -118,14 +212,14 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
             </p>
           </div>
 
-          {/* Bottom Module: Keywords, Spectrum & QR Stamp */}
+          {/* Bottom Module: Keywords, Spectrum & Footer */}
           <div className="space-y-3 pt-3 border-t border-zinc-200">
             {/* 4 Keywords Pills */}
             <div className="flex flex-wrap items-center justify-center gap-1.5">
               {type.keywords.map((kw, i) => (
                 <span
                   key={i}
-                  className="text-[10px] px-2 py-0.5 rounded-full bg-white border border-zinc-200 font-medium text-zinc-700"
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-50 border border-zinc-200 font-medium text-zinc-700"
                 >
                   {kw}
                 </span>
@@ -184,44 +278,49 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
               </div>
             </div>
 
-            {/* Footer QR Stamp & Art Academy Stamp */}
+            {/* Footer Art Academy Stamp without fake QR placeholder */}
             <div className="flex items-center justify-between pt-2 border-t border-dashed border-zinc-300">
               <div className="text-[9px] font-mono text-zinc-400 leading-tight">
                 <div>GUANGZHOU ACADEMY OF FINE ARTS</div>
                 <div>MY GAFA CREATIVE ARCHIVE · 2026</div>
               </div>
-
-              {/* Clean simulated QR code area */}
-              <div className="flex items-center gap-1.5">
-                <div className="w-7 h-7 bg-black p-0.5 rounded flex flex-wrap gap-0.5 justify-center items-center">
-                  <div className="w-2.5 h-2.5 bg-white"></div>
-                  <div className="w-2.5 h-2.5 bg-white"></div>
-                  <div className="w-2.5 h-2.5 bg-white"></div>
-                  <div className="w-2.5 h-2.5 bg-[#D4FF00]"></div>
-                </div>
-                <span className="text-[8px] font-mono text-zinc-400">扫码测定</span>
+              <div className="text-[9px] font-mono font-bold text-zinc-500 tracking-wider">
+                GAFA-TI · 2026
               </div>
             </div>
           </div>
         </div>
+
+        {/* Error message alert */}
+        {errorMessage && (
+          <div className="w-full mt-3 px-4 py-2 bg-rose-500/90 text-white text-xs rounded-xl flex items-center gap-2 animate-in fade-in">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
 
         {/* Action Buttons below card */}
         <div className="w-full mt-4 flex items-center justify-center gap-3">
           <button
             onClick={handleDownload}
             disabled={isExporting}
-            className="flex-1 inline-flex items-center justify-center gap-2 bg-[#D4FF00] hover:bg-[#bce000] text-black font-bold text-sm px-5 py-3 rounded-full shadow-md transition-all cursor-pointer"
+            className={`flex-1 inline-flex items-center justify-center gap-2 font-bold text-sm px-5 py-3 rounded-full shadow-md transition-all ${
+              isExporting
+                ? 'bg-zinc-300 text-zinc-600 cursor-not-allowed'
+                : 'bg-[#D4FF00] hover:bg-[#bce000] text-black cursor-pointer'
+            }`}
           >
-            <Download className="w-4 h-4" />
-            <span>{isExporting ? '生成海报中...' : '下载高清海报 PNG'}</span>
+            <Download className={`w-4 h-4 ${isExporting ? 'animate-bounce' : ''}`} />
+            <span>{isExporting ? '正在生成海报...' : '生成PNG海报'}</span>
           </button>
 
           <button
             onClick={handleCopyLink}
+            disabled={isExporting}
             className="inline-flex items-center justify-center gap-1.5 bg-white hover:bg-zinc-100 text-zinc-900 font-medium text-sm px-4 py-3 rounded-full transition-colors cursor-pointer"
           >
             {hasCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-            <span>{hasCopied ? '已复制链接' : '分享'}</span>
+            <span>{hasCopied ? '已复制链接' : '复制链接'}</span>
           </button>
         </div>
       </div>

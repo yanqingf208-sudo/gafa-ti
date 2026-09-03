@@ -20,7 +20,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={() => onNavigate('home')}
           className="flex items-center gap-3 text-left group cursor-pointer"
         >
-          <div className="w-8 h-8 rounded-full bg-[#121212] text-white flex items-center justify-center font-bold text-sm tracking-tighter group-hover:bg-[#D4FF00] group-hover:text-black transition-colors">
+          <div className="w-8 h-8 rounded-full bg-[#D4FF00] text-black flex items-center justify-center font-bold text-sm tracking-tighter transition-transform group-hover:scale-105 shadow-xs">
             G
           </div>
           <div>

@@ -98,8 +98,8 @@ export const ResultView: React.FC<ResultViewProps> = ({
             </div>
           </div>
 
-          {/* Right Column: Character Visual Hero (5 cols) */}
-          <div className="lg:col-span-5 flex items-center justify-center p-4 sm:p-6 bg-[#FFFFFF] rounded-[28px] border border-black/[0.06] shadow-xs">
+          {/* Right Column: Character Visual Hero (5 cols, pure white, no CSS shadow) */}
+          <div className="lg:col-span-5 flex items-center justify-center p-4 sm:p-6 bg-[#FFFFFF] rounded-[28px] border border-black/[0.06]">
             <CharacterAvatar id={type.id} size="hero" />
           </div>
         </div>

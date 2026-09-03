@@ -42,7 +42,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({
 
         {/* Character Title & Avatar */}
         <div className="flex flex-col sm:flex-row items-center gap-6 mb-6">
-          <div className="w-36 h-48 sm:w-44 sm:h-56 bg-zinc-50 rounded-2xl border border-zinc-100 flex items-center justify-center flex-shrink-0">
+          <div className="w-36 h-48 sm:w-44 sm:h-56 bg-white rounded-2xl border border-zinc-200/80 flex items-center justify-center flex-shrink-0">
             <CharacterAvatar id={type.id} size="md" />
           </div>
 

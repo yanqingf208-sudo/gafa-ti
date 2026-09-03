@@ -26,7 +26,7 @@ export const CharacterCarousel: React.FC<CharacterCarouselProps> = ({
     <section id="creative-states" className="w-full py-12 sm:py-20 overflow-hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-8">
         
-        {/* Editorial Section Header (Reference 2 Inspiration) */}
+        {/* Editorial Section Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 sm:mb-12 pb-6 border-b border-zinc-300/70 gap-4">
           <div>
             {/* Numbering System in Top Left */}
@@ -69,7 +69,7 @@ export const CharacterCarousel: React.FC<CharacterCarouselProps> = ({
           </div>
         </div>
 
-        {/* Horizontal Carousel Track with partial peek off-screen (Reference 2) */}
+        {/* Horizontal Carousel Track */}
         <div
           ref={scrollRef}
           className="flex items-stretch gap-5 sm:gap-6 overflow-x-auto scrollbar-none pb-6 pt-2 snap-x snap-mandatory -mx-4 sm:-mx-8 px-4 sm:px-8 cursor-grab active:cursor-grabbing"
@@ -101,7 +101,7 @@ export const CharacterCarousel: React.FC<CharacterCarouselProps> = ({
                 </div>
 
                 {/* Card Titles */}
-                <div className="mb-4">
+                <div className="mb-2">
                   <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 group-hover:text-black transition-colors">
                     {type.title}
                   </h3>
@@ -110,16 +110,16 @@ export const CharacterCarousel: React.FC<CharacterCarouselProps> = ({
                   </p>
                 </div>
 
-                {/* Card Center: Character Artwork Container */}
-                <div className="relative w-full h-56 sm:h-64 rounded-2xl bg-[#F7F7F8] flex items-center justify-center overflow-hidden border border-zinc-100 group-hover:border-zinc-200 transition-colors my-2">
+                {/* Card Center: Clean Pure-White Character Artwork Area (No grey sub-card, No CSS shadows, slightly enlarged ~10%) */}
+                <div className="relative w-full h-56 sm:h-64 bg-white flex items-end justify-center overflow-hidden my-2">
                   <CharacterAvatar
                     id={type.id}
-                    size="md"
+                    size="carousel"
                     isHovered={isHovered}
                   />
 
                   {/* Quick Detail Inspection Badge on Hover */}
-                  <div className={`absolute bottom-3 right-3 transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
+                  <div className={`absolute bottom-2 right-2 transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
                     <span className="inline-flex items-center gap-1 text-[11px] font-mono bg-black text-white px-2.5 py-1 rounded-full shadow-sm">
                       <span>查看档案</span>
                       <ArrowRight className="w-3 h-3" />
