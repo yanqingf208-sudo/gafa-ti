@@ -22,21 +22,44 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
 
   if (!isOpen) return null;
 
-  // 等待容器内所有图片加载完成与解码
+  // 等待容器内所有图片加载完成、解码并确保 naturalWidth > 0
   const waitForImages = async (container: HTMLElement) => {
     const images = Array.from(container.querySelectorAll('img'));
+    console.log(`[GAFA-TI Poster] image count: ${images.length}`);
+
     await Promise.all(
-      images.map((img) => {
-        if (img.complete && img.naturalWidth > 0) {
-          return Promise.resolve();
+      images.map(async (img) => {
+        // 若图片尚未加载完成或尺寸为 0，等待 onload / onerror
+        if (!img.complete || img.naturalWidth === 0) {
+          await new Promise<void>((resolve) => {
+            const onFinish = () => {
+              img.removeEventListener('load', onFinish);
+              img.removeEventListener('error', onFinish);
+              resolve();
+            };
+            img.addEventListener('load', onFinish);
+            img.addEventListener('error', onFinish);
+          });
         }
-        if (img.decode) {
-          return img.decode().catch(() => {});
+
+        // 尝试调用 decode() 确保解码至显存渲染就绪
+        if (typeof img.decode === 'function') {
+          try {
+            await img.decode();
+          } catch (decodeErr) {
+            console.warn('[GAFA-TI Poster] Image decode warning (non-fatal):', decodeErr);
+          }
         }
-        return new Promise<void>((resolve) => {
-          img.onload = () => resolve();
-          img.onerror = () => resolve();
-        });
+
+        if (!img.complete || img.naturalWidth === 0) {
+          console.error(
+            `[GAFA-TI Poster] Image failed to render properly: src=${img.src}, complete=${img.complete}, naturalWidth=${img.naturalWidth}, naturalHeight=${img.naturalHeight}`
+          );
+        } else {
+          console.log(
+            `[GAFA-TI Poster] Image verified: src=${img.src.split('/').pop()}, width=${img.naturalWidth}x${img.naturalHeight}`
+          );
+        }
       })
     );
   };
@@ -48,44 +71,48 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
     console.log('[GAFA-TI Poster] Starting poster generation...');
 
     if (!cardRef.current) {
-      console.error('[GAFA-TI Poster] 1. Ref found: FALSE (ShareResultCard ref is null)');
+      console.error('[GAFA-TI Poster] ref not found (ShareResultCard ref is null)');
       setErrorMessage('海报生成失败，请重试');
       return;
     }
-    console.log('[GAFA-TI Poster] 1. Ref found: TRUE');
+    console.log('[GAFA-TI Poster] ref found');
 
     try {
       setIsExporting(true);
 
-      // 等待字体就绪
+      // 1. 等待字体加载就绪
       await document.fonts.ready;
-      console.log('[GAFA-TI Poster] 2. Fonts ready: TRUE');
+      console.log('[GAFA-TI Poster] fonts ready');
 
-      // 等待所有人物图片解码就绪
+      // 2. 等待所有图片完全加载并解码
       await waitForImages(cardRef.current);
-      console.log('[GAFA-TI Poster] 3. Images ready: TRUE');
+      console.log('[GAFA-TI Poster] images ready');
 
-      // 使用 html-to-image 纯白底高清渲染
+      // 3. 等待至少两帧 requestAnimationFrame，确保 DOM 绘制完全稳定
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      console.log('[GAFA-TI Poster] DOM stable');
+
+      // 4. 使用 html-to-image 纯白底高清渲染
       const dataUrl = await toPng(cardRef.current, {
         cacheBust: true,
         pixelRatio: 2,
         backgroundColor: '#FFFFFF',
-        quality: 1,
       });
 
       if (!dataUrl || !dataUrl.startsWith('data:image/png')) {
         throw new Error('Invalid dataUrl produced by toPng');
       }
-      console.log('[GAFA-TI Poster] 4. toPng completed: TRUE (dataUrl length:', dataUrl.length, ')');
+      console.log('[GAFA-TI Poster] PNG generated');
 
-      // 转换为 PNG Blob
+      // 5. 转换为 PNG Blob
       const response = await fetch(dataUrl);
       const blob = await response.blob();
 
-      if (!blob || blob.size === 0) {
-        throw new Error('Generated PNG blob is empty');
+      if (!blob || blob.type !== 'image/png' || blob.size === 0) {
+        throw new Error(`Invalid blob produced: type=${blob?.type}, size=${blob?.size}`);
       }
-      console.log('[GAFA-TI Poster] 5. Blob size:', blob.size, 'bytes, type:', blob.type);
+      console.log(`[GAFA-TI Poster] blob size: ${blob.size}`);
 
       const fileName = `GAFA-TI-${type.number}-${type.title}.png`;
 
@@ -110,7 +137,7 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
         }
       }
 
-      // 标准浏览器直接触发下载
+      // 6. 标准浏览器直接触发下载
       if (!sharedSuccessfully) {
         const blobUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -121,13 +148,13 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
         document.body.appendChild(link);
         link.click();
 
-        // 兼容移动端 Safari：若无法直接触发下载链接，打开图片供长按保存
+        // 兼容移动端 Safari：若无法直接触发下载链接，保留短暂时间后释放
         setTimeout(() => {
           document.body.removeChild(link);
           URL.revokeObjectURL(blobUrl);
         }, 1000);
 
-        console.log('[GAFA-TI Poster] 6. Download triggered:', fileName);
+        console.log('[GAFA-TI Poster] download triggered');
       }
     } catch (err) {
       console.error('[GAFA-TI Poster] Failed to generate GAFA-TI poster:', err);
