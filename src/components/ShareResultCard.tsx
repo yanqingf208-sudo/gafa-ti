@@ -42,15 +42,19 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // 唯一权威图片源状态 (所有预览、长按保存、下载、分享均使用同一份 posterBlob)
-  const [posterBlob, setPosterBlob] = useState<Blob | null>(null);
-  const [posterObjectUrl, setPosterObjectUrl] = useState<string | null>(null);
-  const currentUrlRef = useRef<string | null>(null);
+  // =========================================================================
+  // 唯一最终资源状态 (Single Source of Truth)
+  // 预览、长按保存、下载、分享全部使用同一份 finalPosterBlob 派生的真实高清 PNG
+  // =========================================================================
+  const [finalPosterBlob, setFinalPosterBlob] = useState<Blob | null>(null);
+  const [finalPosterDataUrl, setFinalPosterDataUrl] = useState<string | null>(null);
+  const [finalPosterObjectUrl, setFinalPosterObjectUrl] = useState<string | null>(null);
+  const activeObjectUrlRef = useRef<string | null>(null);
 
   const charImageRecord = getCharacterImage(type.id);
-  const fileName = `GAFA-TI-${type.number}-${type.title}-完整档案长图.png`;
+  const fileName = `GAFA-TI-${type.number}-${type.title}-完整创作档案长图.png`;
 
-  // 生成唯一高清 1080px 长图 PNG Blob
+  // 生成唯一高清 1080px 长图 PNG Blob 与 DataURL
   const generatePoster = async () => {
     if (!charImageRecord?.src) {
       setErrorMessage('立绘资源加载中，请稍候重试');
@@ -61,20 +65,34 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
       setIsGenerating(true);
       setErrorMessage(null);
 
-      // 使用 Canvas 2D 引擎生成 1080px 宽度高精度竖向长图 PNG (只生成一次)
+      // 1. 生成唯一权威 1080px 宽度高精度竖向长图 PNG Blob (只生成一次)
       const blob = await generateLongPosterCanvasBlob(type, charImageRecord.src);
-      console.log(`[GAFA-TI Long Poster] Unified PNG blob generated successfully, size: ${blob.size}`);
+      console.log(`[GAFA-TI Long Poster] Final poster blob ready, size: ${blob.size}`);
 
-      // 清理旧的 Object URL
-      if (currentUrlRef.current) {
-        URL.revokeObjectURL(currentUrlRef.current);
+      // 2. 转换为 Base64 DataURL (对微信、安卓WebView、iOS长按保存具备100%全端兼容性，免除Blob生命周期限制)
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+          } else {
+            reject(new Error('Failed to convert Blob to DataURL'));
+          }
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+
+      // 3. 同时派生 Object URL 供桌面端高性能下载
+      if (activeObjectUrlRef.current) {
+        URL.revokeObjectURL(activeObjectUrlRef.current);
       }
-
       const objectUrl = URL.createObjectURL(blob);
-      currentUrlRef.current = objectUrl;
+      activeObjectUrlRef.current = objectUrl;
 
-      setPosterBlob(blob);
-      setPosterObjectUrl(objectUrl);
+      setFinalPosterBlob(blob);
+      setFinalPosterDataUrl(dataUrl);
+      setFinalPosterObjectUrl(objectUrl);
     } catch (err) {
       console.error('[GAFA-TI Long Poster] Failed to generate GAFA-TI long poster:', err);
       setErrorMessage('长图生成失败，请重试');
@@ -83,35 +101,37 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
     }
   };
 
-  // 当弹窗打开时，自动触发一次高清长图生成
+  // 当弹窗打开时，触发一次高清长图生成；关闭时安全释放内存
   useEffect(() => {
     if (isOpen) {
       generatePoster();
     } else {
-      // 弹窗关闭时清理资源
-      if (currentUrlRef.current) {
-        URL.revokeObjectURL(currentUrlRef.current);
-        currentUrlRef.current = null;
+      if (activeObjectUrlRef.current) {
+        URL.revokeObjectURL(activeObjectUrlRef.current);
+        activeObjectUrlRef.current = null;
       }
-      setPosterBlob(null);
-      setPosterObjectUrl(null);
+      setFinalPosterBlob(null);
+      setFinalPosterDataUrl(null);
+      setFinalPosterObjectUrl(null);
       setErrorMessage(null);
       setToastMessage(null);
     }
 
     return () => {
-      if (currentUrlRef.current) {
-        URL.revokeObjectURL(currentUrlRef.current);
-        currentUrlRef.current = null;
+      if (activeObjectUrlRef.current) {
+        URL.revokeObjectURL(activeObjectUrlRef.current);
+        activeObjectUrlRef.current = null;
       }
     };
   }, [isOpen, type.id]);
 
   if (!isOpen) return null;
 
-  // 统一保存长图处理流程 (桌面直接下载，移动端优先系统分享或引导长按保存)
+  // =========================================================================
+  // 统一保存长图处理流程 (桌面直接下载，移动端优先系统文件分享，微信/兜底长按保存)
+  // =========================================================================
   const handleSavePoster = async () => {
-    if (!posterBlob || !posterObjectUrl) {
+    if (!finalPosterBlob) {
       if (!isGenerating) generatePoster();
       return;
     }
@@ -119,16 +139,16 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
     const isMobileOrTablet = checkIsMobileOrTablet();
     const isWeChat = checkIsWeChat();
 
-    // 微信内置浏览器：引导长按保存，不强制跳出浏览器
+    // 微信内置浏览器：引导长按保存，绝不强制跳出浏览器，绝不丢失测试状态
     if (isWeChat) {
-      setToastMessage('微信用户请长按上方图片，选择“保存图片”');
+      setToastMessage('微信用户请长按上方长图，选择“保存图片”');
       setTimeout(() => setToastMessage(null), 3500);
       return;
     }
 
-    // 移动端 / 平板设备：检测支持 Web Share API 文件分享
+    // 移动端 / 平板设备：方案 A - 检测系统原生 Web Share 文件分享
     if (isMobileOrTablet) {
-      const pngFile = new File([posterBlob], fileName, { type: 'image/png' });
+      const finalPosterFile = new File([finalPosterBlob], fileName, { type: 'image/png' });
 
       if (
         typeof navigator !== 'undefined' &&
@@ -137,7 +157,7 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
       ) {
         let canShareFiles = false;
         try {
-          canShareFiles = navigator.canShare({ files: [pngFile] });
+          canShareFiles = navigator.canShare({ files: [finalPosterFile] });
         } catch {
           canShareFiles = false;
         }
@@ -145,8 +165,8 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
         if (canShareFiles) {
           try {
             await navigator.share({
-              files: [pngFile],
-              title: `我的 GAFA-TI 创作人格 · ${type.title}`,
+              files: [finalPosterFile],
+              title: `我的 GAFA-TI 创作档案 · ${type.title}`,
               text: `我的广美创作状态是：${type.number} ${type.title} (${type.mbtiCode})`,
             });
             return;
@@ -156,31 +176,34 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
         }
       }
 
-      // 若不支持系统文件分享或用户取消：友好提示长按保存
-      setToastMessage('请长按上方长图，选择“保存图片”到相册');
+      // 方案 B - 系统不支持文件 Web Share 时：绝不报错跳浏览器，友好引导长按保存
+      setToastMessage('请长按上方完整长图，选择“保存图片”即可保存到相册');
       setTimeout(() => setToastMessage(null), 3500);
       return;
     }
 
-    // 桌面端：直接触发同一份 posterObjectUrl 下载
-    const link = document.createElement('a');
-    link.href = posterObjectUrl;
-    link.download = fileName;
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    link.click();
+    // 桌面端：直接触发同一份 finalPosterBlob / finalPosterDataUrl 下载
+    const downloadUrl = finalPosterObjectUrl || finalPosterDataUrl;
+    if (downloadUrl) {
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = fileName;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
 
-    setTimeout(() => {
-      if (document.body.contains(link)) {
-        document.body.removeChild(link);
-      }
-    }, 2000);
+      setTimeout(() => {
+        if (document.body.contains(link)) {
+          document.body.removeChild(link);
+        }
+      }, 2000);
+    }
   };
 
-  // 统一分享长图 (使用同一份 posterBlob)
+  // 统一分享长图 (使用同一份 finalPosterBlob)
   const handleSharePoster = async () => {
-    if (!posterBlob) return;
-    const file = new File([posterBlob], fileName, { type: 'image/png' });
+    if (!finalPosterBlob) return;
+    const finalPosterFile = new File([finalPosterBlob], fileName, { type: 'image/png' });
 
     if (
       typeof navigator !== 'undefined' &&
@@ -188,10 +211,10 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
       typeof navigator.canShare === 'function'
     ) {
       try {
-        if (navigator.canShare({ files: [file] })) {
+        if (navigator.canShare({ files: [finalPosterFile] })) {
           await navigator.share({
-            files: [file],
-            title: `我的 GAFA-TI 创作人格 · ${type.title}`,
+            files: [finalPosterFile],
+            title: `我的 GAFA-TI 创作档案 · ${type.title}`,
             text: `我的广美创作状态是：${type.number} ${type.title} (${type.mbtiCode})`,
           });
         }
@@ -259,7 +282,7 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
         </div>
 
         {/* ========================================================= */}
-        {/* 核心展示区：唯一 1080px 高清完整长图 PNG (非 HTML 卡片，非缩略图) */}
+        {/* 核心展示区：真实高清 1080px PNG <img /> (非 HTML 组件，非截图层) */}
         {/* ========================================================= */}
         <div className="w-full relative rounded-2xl overflow-y-auto max-h-[60vh] sm:max-h-[65vh] shadow-2xl border border-white/20 bg-[#ECECED] flex flex-col items-center justify-start">
           {isGenerating && (
@@ -269,16 +292,23 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
             </div>
           )}
 
-          {!isGenerating && posterObjectUrl && (
+          {!isGenerating && (finalPosterDataUrl || finalPosterObjectUrl) && (
             <img
-              src={posterObjectUrl}
-              alt="GAFA-TI完整结果长图"
-              className="w-full h-auto object-contain block select-none pointer-events-auto"
-              style={{ WebkitTouchCallout: 'default' }}
+              src={finalPosterDataUrl || finalPosterObjectUrl || ''}
+              alt="GAFA-TI完整创作档案长图"
+              className="w-full h-auto block select-none pointer-events-auto"
+              style={{
+                display: 'block',
+                width: '100%',
+                height: 'auto',
+                maxHeight: 'none',
+                objectFit: 'contain',
+                WebkitTouchCallout: 'default',
+              }}
             />
           )}
 
-          {!isGenerating && !posterObjectUrl && errorMessage && (
+          {!isGenerating && !finalPosterDataUrl && !finalPosterObjectUrl && errorMessage && (
             <div className="py-16 px-4 flex flex-col items-center justify-center gap-3 text-center">
               <AlertCircle className="w-8 h-8 text-rose-500" />
               <p className="text-sm font-medium text-zinc-800">{errorMessage}</p>
@@ -308,15 +338,15 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
           </div>
         )}
 
-        {/* Action Buttons below card */}
+        {/* Action Buttons below card (图片外独立控制按钮组) */}
         <div className="w-full mt-3 flex flex-col gap-2">
           <div className="flex items-center justify-center gap-2.5">
-            {/* 1. 保存 / 下载长图 (统一使用同一个 posterBlob) */}
+            {/* 1. 保存 / 下载长图 (统一使用同一个 finalPosterBlob) */}
             <button
               onClick={handleSavePoster}
-              disabled={isGenerating || !posterBlob}
+              disabled={isGenerating || !finalPosterBlob}
               className={`flex-1 inline-flex items-center justify-center gap-2 font-bold text-xs sm:text-sm px-4 py-3 rounded-full shadow-md transition-all ${
-                isGenerating || !posterBlob
+                isGenerating || !finalPosterBlob
                   ? 'bg-zinc-600 text-zinc-400 cursor-not-allowed'
                   : 'bg-[#D4FF00] hover:bg-[#bce000] text-black cursor-pointer'
               }`}
@@ -329,7 +359,7 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
             {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
               <button
                 onClick={handleSharePoster}
-                disabled={isGenerating || !posterBlob}
+                disabled={isGenerating || !finalPosterBlob}
                 className="inline-flex items-center justify-center gap-1.5 bg-white/20 hover:bg-white/30 text-white font-medium text-xs sm:text-sm px-4 py-3 rounded-full backdrop-blur-sm transition-colors cursor-pointer"
               >
                 <Share2 className="w-4 h-4" />
@@ -358,4 +388,5 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
     </div>
   );
 };
+
 
