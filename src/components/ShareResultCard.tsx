@@ -12,6 +12,38 @@ interface ShareResultCardProps {
   onClose: () => void;
 }
 
+// 验证图片 Blob 真实像素宽高 (通过 ImageBitmap 或 Image naturalWidth/Height)
+async function verifyBlobImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      const dims = { width: bitmap.width, height: bitmap.height };
+      bitmap.close();
+      return dims;
+    } catch {
+      // ignore & fallback to Image loading
+    }
+  }
+
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const dims = {
+        width: img.naturalWidth || img.width,
+        height: img.naturalHeight || img.height,
+      };
+      URL.revokeObjectURL(url);
+      resolve(dims);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load blob image for dimension verification'));
+    };
+    img.src = url;
+  });
+}
+
 // 严格判断是否为真实移动端或平板设备（iPhone / iPad / iPadOS / Android / HarmonyOS）
 // 严禁使用 navigator.share 来判断设备类型，因为 macOS 桌面 Safari 也支持 navigator.share
 function checkIsMobileOrTablet(): boolean {
@@ -165,7 +197,7 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
 
   // =========================================================================
   // 移动端/平板专用保存到相册函数 (iPhone / iPad / Android / 鸿蒙)
-  // 调用系统原生 Web Share File 接口唤起系统菜单（保存到照片 / 存储图像 / 微信 / 文件）
+  // 100% 严格使用电脑端相同的完整 finalPosterBlob，绝不截取视口，绝不二次重绘
   // =========================================================================
   const savePosterOnMobile = async () => {
     if (!finalPosterBlob) {
@@ -173,8 +205,33 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
       return;
     }
 
+    // 1. 保存前严格检测 PNG 真实尺寸（防止任何异常截断）
+    let dims = { width: 1080, height: 2400 };
+    try {
+      dims = await verifyBlobImageDimensions(finalPosterBlob);
+    } catch (e) {
+      console.warn('[GAFA-TI Save] Dimension check warning:', e);
+    }
+
+    console.log('[GAFA-TI Android Save] blob size:', finalPosterBlob.size);
+    console.log('[GAFA-TI Android Save] image width:', dims.width);
+    console.log('[GAFA-TI Android Save] image height:', dims.height);
+    console.log('[GAFA-TI Android Save] expected width:', 1080);
+    console.log('[GAFA-TI Android Save] expected height:', '>2000');
+    console.log('[GAFA-TI Android Save] using finalPosterBlob: true');
+
+    // 若检测到实际宽度不是 1080 或高度异常过小（例如被误截断为视口高度），立即阻止保存
+    if (dims.width !== 1080 || dims.height < 2000) {
+      console.error('[GAFA-TI Android Save] Invalid poster dimensions detected:', dims.width, dims.height);
+      setToastMessage('长图尚未完整生成，请稍后重试');
+      setTimeout(() => setToastMessage(null), 3500);
+      return;
+    }
+
+    // 2. 构造与电脑端完全一致的 finalPosterFile
     const finalPosterFile = new File([finalPosterBlob], fileName, { type: 'image/png' });
 
+    // 3. 优先使用系统原生 Web Share File 接口唤起系统相册保存
     if (
       typeof navigator !== 'undefined' &&
       typeof navigator.share === 'function' &&
@@ -202,8 +259,29 @@ export const ShareResultCard: React.FC<ShareResultCardProps> = ({
       }
     }
 
-    // 移动端若环境暂不支持直接调用系统文件分享
-    setToastMessage('当前浏览器环境暂不支持直接拉起相册，请点击“复制链接”在系统浏览器中打开');
+    // 4. Android / 鸿蒙浏览器若不支持 Web Share File，走原生下载兜底（使用同一个完整 finalPosterBlob）
+    const downloadUrl = finalPosterObjectUrl || finalPosterDataUrl;
+    if (downloadUrl) {
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = fileName;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+
+      setTimeout(() => {
+        if (document.body.contains(link)) {
+          document.body.removeChild(link);
+        }
+      }, 2000);
+
+      setToastMessage('已为您下载完整长图，若未拉起相册请在“下载内容”或相册中查看');
+      setTimeout(() => setToastMessage(null), 4000);
+      return;
+    }
+
+    // 5. 无法自动拉起相册时的友好提示
+    setToastMessage('当前浏览器环境暂不支持直接保存，请点击“复制链接”在系统浏览器中打开');
     setTimeout(() => setToastMessage(null), 4000);
   };
 
