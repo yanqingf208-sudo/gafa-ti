@@ -16,6 +16,13 @@ import {
   validateGafaTypes,
 } from './data/characters';
 import { CreativeType, DimensionKey } from './types';
+import {
+  saveResultToStorage,
+  getSavedResultFromStorage,
+  getResultFromUrl,
+  clearSavedResult,
+  generateResultShareUrl,
+} from './utils/resultPersistence';
 
 type ViewMode = 'home' | 'quiz' | 'analysing' | 'result';
 
@@ -24,13 +31,31 @@ export default function App() {
   const [activeResultType, setActiveResultType] = useState<CreativeType>(CREATIVE_TYPES[0]);
   const [inspectModalType, setInspectModalType] = useState<CreativeType | null>(null);
 
-  // Integrity validation check on mount
+  // 1. 完整性校验与结果持久化恢复
   useEffect(() => {
     const check = validateGafaTypes();
     if (!check.valid) {
       console.error('[GAFA-TI FATAL INTEGRITY ERROR]', check.errors);
     } else {
       console.log('[GAFA-TI] 16 Official Creative Types Validated Successfully.');
+    }
+
+    // 优先 1：从 URL 参数/Hash 恢复结果（支持跨设备、跨浏览器与分享链接恢复）
+    const urlResult = getResultFromUrl();
+    if (urlResult) {
+      console.log('[GAFA-TI] Restored result state from URL:', urlResult.mbtiCode);
+      setActiveResultType(urlResult);
+      setView('result');
+      return;
+    }
+
+    // 优先 2：从 localStorage 恢复上一次测试结果（防止刷新或意外退出导致数据丢失）
+    const savedResult = getSavedResultFromStorage();
+    if (savedResult) {
+      console.log('[GAFA-TI] Restored result state from localStorage:', savedResult.mbtiCode);
+      setActiveResultType(savedResult);
+      setView('result');
+      return;
     }
   }, []);
 
@@ -39,8 +64,9 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [view]);
 
-  // Navigate to quiz
+  // Navigate to quiz (用户点击开始/重新测试时，清空旧缓存以进行全新答题)
   const handleStartQuiz = () => {
+    clearSavedResult();
     setView('quiz');
   };
 
@@ -72,6 +98,17 @@ export default function App() {
       },
       spectrum: scoringResult.percentages,
     };
+
+    // 4. 持久化存储结果，并更新当前 URL Hash 方便分享与刷新保留
+    saveResultToStorage(dynamicType);
+    try {
+      const shareUrl = generateResultShareUrl(dynamicType);
+      if (shareUrl && window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', shareUrl);
+      }
+    } catch (e) {
+      console.warn('[GAFA-TI] Failed to update history state:', e);
+    }
 
     setActiveResultType(dynamicType);
   };
